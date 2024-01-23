@@ -28,16 +28,18 @@
 #include "SerialFlash.h"
 #include "util/SerialFlash_directwrite.h"
 
-#define CSASSERT()  DIRECT_WRITE_LOW(cspin_basereg, cspin_bitmask)
-#define CSRELEASE() DIRECT_WRITE_HIGH(cspin_basereg, cspin_bitmask)
+#define CSASSERT()  ((cs_pin == 254 && cs_on != NULL) ? cs_on() : DIRECT_WRITE_LOW(cspin_basereg, cspin_bitmask))
+#define CSRELEASE() ((cs_pin == 254 && cs_off != NULL) ? cs_off() : DIRECT_WRITE_HIGH(cspin_basereg, cspin_bitmask))
 #define SPICONFIG   SPISettings(50000000, MSBFIRST, SPI_MODE0)
 
 uint16_t SerialFlashChip::dirindex = 0;
 uint8_t SerialFlashChip::flags = 0;
 uint8_t SerialFlashChip::busy = 0;
 
+static uint8_t cs_pin = 0;
 static volatile IO_REG_TYPE *cspin_basereg;
 static IO_REG_TYPE cspin_bitmask;
+static SerialFlashCS_cb cs_on = NULL, cs_off = NULL; // Chip select callbacks
 
 static SPIClass& SPIPORT = SPI;
 
@@ -346,10 +348,18 @@ bool SerialFlashChip::begin(uint8_t pin)
 	uint8_t f;
 	uint32_t size;
 
+    cs_pin = pin;
+    // Internal CS is disabled
+    if (cs_pin == 254) {
+        if (cs_on == NULL || cs_off == NULL) {
+            return false;
+        }
+    }
+
 	cspin_basereg = PIN_TO_BASEREG(pin);
 	cspin_bitmask = PIN_TO_BITMASK(pin);
 	SPIPORT.begin();
-	pinMode(pin, OUTPUT);
+	if (cs_pin != 254) pinMode(pin, OUTPUT);
 	CSRELEASE();
 	readID(id);
 	if ((id[0]==0 && id[1]==0 && id[2]==0) || (id[0]==255 && id[1]==255 && id[2]==255)) {
@@ -394,6 +404,11 @@ bool SerialFlashChip::begin(uint8_t pin)
 	flags = f;
 	readID(id);
 	return true;
+}
+
+void SerialFlashChip::setCSCallbacks(SerialFlashCS_cb on, SerialFlashCS_cb off) {
+    cs_on = on;
+    cs_off = off;
 }
 
 // chips tested: https://github.com/PaulStoffregen/SerialFlash/pull/12#issuecomment-169596992
